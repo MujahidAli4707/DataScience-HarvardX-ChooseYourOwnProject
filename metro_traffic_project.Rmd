@@ -1,0 +1,743 @@
+---
+title: "Choose Your Own Project: Interstate Traffic Volume Prediction Using Machine Learning"
+author: "Mujahid Ali"
+date: "2023-12-31"
+output: 
+  pdf_document:
+    toc: yes
+    number_sections: yes
+    toc_depth: 3
+    fig_width:  5
+    fig_height:  3.5
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(warn=-1)
+```
+\newpage
+# Project Overview
+
+This assignment for the 'Data Science: Capstone' course (PH125.9x) by HarvardX through edX focuses on applying advanced machine learning techniques to a public dataset, moving beyond standard linear regression. The goal is to analyze the data effectively and communicate the insights clearly, demonstrating both technical proficiency and the ability to translate complex data-driven findings into understandable terms. This project emphasizes the practical application of data science skills and clear communication in the field.
+
+## Introduction
+
+Traffic volume refers to the number of vehicles traversing a specific point on a road within a given timeframe. This metric is vital for local councils, as it provides insights into the usage intensity of various routes. By analyzing traffic counts, authorities can identify heavily utilized roads. This information is crucial for infrastructure planning, enabling decisions on road improvements or the development of alternative routes to alleviate excessive traffic. Such data-driven approaches are essential for effective urban planning and traffic management, aiming to enhance road efficiency and safety.
+
+## Project Description
+
+This project aims to leverage machine learning models to predict traffic volume on an American interstate. A key part of the project involves understanding the critical features that influence traffic flow. To enhance the accuracy of predictions, the project will incorporate data transformation and feature engineering techniques. A range of machine learning approaches will be explored and evaluated. The selection of the best model will be based on performance metrics, with a particular focus on the Root Mean Square Error (RMSE). This approach will not only provide insights into traffic patterns but also help in identifying the most effective methods for traffic volume prediction.
+
+## Dataset Overview
+
+This project utilizes the Metro Interstate Traffic Volume Dataset from the UCI Machine Learning Repository. The dataset comprises hourly traffic volume data for the westbound Interstate 94 (I-94), enriched with weather and holiday information spanning from 2012 to 2018.
+
+Interstate 94 is a crucial east-west highway in the United States, linking the Great Lakes and northern Great Plains regions. It stretches from Billings, Montana to Port Huron, Michigan. The specific focus of this dataset is a point on the I-94 approximately midway between Minneapolis and St Paul, Minnesota. This location serves as the primary measurement site for the traffic volume data. The dataset's comprehensive nature, including various influencing factors like weather and holidays, provides a robust foundation for predictive modeling and analysis in this project.
+
+## Dataset Details
+
+This project utilizes data from the UCI Machine Learning Repository, combining traffic information from the MN Department of Transportation and weather data from OpenWeatherMap. The dataset includes several key variables:
+
+Response Variable:
+
+- Traffic Volume: Numeric, representing hourly traffic volume.
+
+Features:
+
+- Holiday: Categorical - US national holidays and regional holidays.
+- Temperature: Numeric - average temperature in Kelvin.
+- Rain: Numeric - amount in mm of rain during the hour.
+- Snow: Numeric - amount in mm of snow during the hour.
+- Clouds: Numeric - percentage of cloud cover.
+- Weather Main: Text - brief description of the current weather.
+- Weather Description: Text - detailed description of the current weather.
+- Date Time: DateTime - hour of data collection in local CST time.
+
+In the following sections, we will explore and visualize this data, focusing on data transformation and feature engineering to improve our predictive model.
+
+# Methods and Analysis
+
+## Data Load, Analysis and Preparation
+
+We start by loading essential libraries for data manipulation and analysis:
+
+*tidyverse*: An ecosystem of packages for data manipulation, visualization, and data science workflows.
+
+*lubridate*: Makes it easier to work with dates and times in R.
+
+*caret*: Provides functions for training and plotting a wide variety of predictive models.
+
+*R.utils*: Contains a variety of utility functions for programming and manipulation of R objects.
+
+*knitr*: Allows for dynamic report generation in R.
+
+*kableExtra*: Extends 'knitr::kable()' output by enabling additional styling and formatting of tables.
+
+*tictoc*: Functions for timing R scripts, which can be used to monitor performance and bottlenecks.
+
+*xgboost*: An optimized distributed gradient boosting library designed to be highly efficient, flexible, and portable.
+
+```{r message=FALSE, warning=FALSE, include=FALSE, results='hide'}
+#List of required packages
+requiredPackages <- c("tidyverse", "lubridate", "caret", "R.utils", 
+                      "knitr","kableExtra", "tictoc", "xgboost")
+
+#Checking which packages are not installed and installing them
+not_installed <- requiredPackages[!requiredPackages %in% rownames(installed.packages())]
+if (length(not_installed) > 0) {
+  install.packages(not_installed, dependencies = TRUE)
+}
+
+#Loading all required packages
+lapply(requiredPackages, library, character.only = TRUE)
+
+```
+**Data Loading**
+
+We will download the data directly from UCI Machine Learning Repository.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+temp <- tempfile()
+download.file("https://archive.ics.uci.edu/ml/machine-learning-databases/00492/Metro_Interstate_Traffic_Volume.csv.gz", temp, mode = "wb")
+try(gunzip(temp, "Metro_Interstate_Traffic_Volume.csv"))
+metro <- read.csv("Metro_Interstate_Traffic_Volume.csv")
+rm(temp)
+
+#Preview of the dataset structure (limited columns):
+limited_glimpse <- function(data, max_cols = 10) {
+  cols <- min(ncol(data), max_cols)
+  glimpse(select(data, 1:cols))
+  if (ncol(data) > cols) {
+    cat("...\n")
+  }
+}
+
+limited_glimpse(metro)
+
+```
+
+Before diving into the analysis, it is crucial to prepare the dataset. This involves several steps to ensure the data is in the desired format for effective analysis. The process includes:
+
+*Data Cleaning*: We'll address any imputation problems in the dataset.
+
+*Handling Duplications*: It's essential to identify and remove any duplicate records to maintain data integrity.
+
+*Data Type Conversion*: Some variables will be converted to factors (categorical variables) for more appropriate analysis.
+
+*Feature Engineering*: We will create new features that might be more indicative of the patterns we are trying to analyze.
+
+The dataset comprises 48,204 hourly records, including traffic volume, weather conditions, and holiday information. The records span from October 2, 2012, to September 30, 2018. However, it's important to note a gap in the data between August 2014 and June 2015 where no records are available.
+
+In the following sections, we'll outline the specific steps taken in each of these areas to prepare our dataset for comprehensive analysis.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Creating new features and fixing problems in the original dataset
+metro2 <- metro %>%
+  mutate(
+    # Fixing the data. 2016-12-26 is not Christmas Day, 2016-12-25 is
+    holiday = ifelse(date_time == "2016-12-26 00:00:00", "None",
+                     ifelse(date_time == "2016-12-25 00:00:00", "Christmas Day", holiday)),
+    date = as.Date(date_time),
+    hour = factor(hour(ymd_hms(date_time))),
+    month = factor(month(ymd_hms(date_time))),
+    year = factor(year(ymd_hms(date_time))),
+    weekday = factor(wday(ymd_hms(date_time), label = TRUE),
+                     levels = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"))
+  ) %>%
+  mutate(
+    weather_main = ifelse(weather_main %in% c("Smoke", "Squall"), "Other", weather_main)
+  ) %>%
+  group_by(date) %>%
+  mutate(
+    holiday = ifelse(any(holiday != "None"), holiday[which(holiday != "None")], "None"),
+    is_holiday = ifelse(holiday == "None", "No", "Yes")
+  ) %>%
+  ungroup() %>%
+  filter(
+    temp > 0,               # Filtering out impossible temperature values (in Kelvin)
+    rain_1h < 9831.3        # Filtering out extreme rain values
+  ) %>%
+  mutate(
+    holiday_pre = factor(ifelse(is_holiday[match(date + days(1), date)] == "Yes", "pre holiday", "No")),
+    holiday_pos = factor(ifelse(is_holiday[match(date - days(1), date)] == "Yes", "pos holiday", "No"))
+  ) %>%
+  select(-weather_description) %>%
+  distinct() # replacing 'unique()' with 'distinct()' for more efficient filtering of duplicates
+
+# Assuming 'date_time' is in the format "yyyy-mm-dd hh:mm:ss"
+metro2$date <- as.Date(metro2$date_time, format = "%Y-%m-%d %H:%M:%S")
+
+# Now recreate the 'weekday' column, ensuring it is correctly formatted
+metro2$weekday <- weekdays(metro2$date)
+
+# Since the 'weekday' column is being used in ggplot, convert it to a factor
+metro2$weekday <- factor(metro2$weekday, levels = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"))
+
+glimpse(metro2)
+
+```
+
+This dataset exhibits significant duplication issues. It contains 17 instances of complete observation replication and a notable 7,629 cases where entries, although identical in date-time, differ solely in their weather descriptions. A further inconsistency is observed in weather data accuracy: several records are categorized under thunderstorms or rain-related phenomena, yet paradoxically report zero millimeters of precipitation within the same timeframe. This discrepancy is mirrored in the data concerning snowfall, underscoring the need for rigorous data validation and cleansing to ensure the dataset's integrity and utility in analysis.
+
+We eliminated duplicate observations and experimented with models both including and excluding the weather description feature. Models that omitted this variable showed marginally superior performance. Consequently, this report will focus exclusively on analyses that exclude the weather description feature.
+
+We derived new variables from the existing dataset, namely day, hour, month, year, and weekday. The date "2016-12-26" was erroneously labeled as Christmas Day; we corrected this to "2016-12-25". Additionally, we observed that holidays were initially marked only during their first hour (e.g., "2012-12-25 00:00:00" as Christmas Day, but not subsequent hours). This labeling was rectified, increasing holiday-tagged observations from 61 to 1,203. We also introduced a binary variable indicating whether a day is a holiday and two others to denote if it's adjacent to a holiday. In cases of multiple temperature, rain, or cloud cover measurements, we computed their average.
+
+Our review identified ten records with an implausible temperature of 0 Kelvin, a phenomenon never recorded on Earth. Similarly, one instance showed rainfall at 9831.3 mm per hour, far exceeding the highest known record of 305 mm/hour. We have removed all these eleven anomalous observations from our dataset.
+
+## Exploratory Data Analysis
+Exploratory Data Analysis (EDA) is an essential preliminary step in data investigation, where patterns are identified, anomalies detected, hypotheses tested, and assumptions verified through summary statistics and visual methods.
+
+The analysis reveals that the traffic volume data exhibits a multimodal distribution characterized by three distinct peaks. The first peak, representing the most frequent traffic volume, falls below 2500 vehicles per hour. The second peak is observed at approximately 3000 vehicles per hour, while the third peak occurs around the 4500 vehicles per hour mark.
+
+```{r message=FALSE, echo=FALSE}
+# Histogram of traffic volume
+metro2 %>%
+  ggplot(aes(traffic_volume)) +
+  geom_histogram(bins = 35, fill = "steelblue") +
+  scale_x_continuous(breaks = seq(0, 7300, by = 1000)) +
+  labs(title = "Histogram of traffic volume",
+       x = "Traffic volume", y = "Count") +
+  theme_classic()
+
+```
+
+Some new features were created from the original dataset, such as the weekday. As shown in the boxplot below, the traffic volume appears to increase slowly over the weekdays and is considerably lower on weekends.
+
+```{r message=FALSE, echo=FALSE}
+# Boxplot of traffic per weekday
+metro2 %>%
+  ggplot(aes(x = weekday, y = traffic_volume)) +
+  geom_boxplot(fill = "steelblue", varwidth = TRUE) +
+  labs(
+    title = "Boxplot of traffic volume per weekday",
+    x = "Weekday", y = "Traffic volume"
+  ) +
+  theme_classic()
+
+```
+
+As presented in the boxplot below, the traffic volume appears to be slightly lower during the holidays.
+
+```{r message=FALSE, echo=FALSE}
+# Boxplot of traffic volume if a day is a holiday or not
+metro2 %>%
+  ggplot(aes(y = traffic_volume, x = is_holiday)) +
+  geom_boxplot(fill = "steelblue", varwidth = TRUE) + 
+  labs(
+    title = "Boxplot of traffic volume on Holidays vs. Non-Holidays",
+    x = "Holiday", y = "Traffic volume"
+  ) +
+  theme_classic()
+
+```
+
+The traffic volume demonstrates significant hourly variations, suggesting its potential as a valuable predictor in our model. Notably, the day's first major peak occurs early, from 6 to 7 am. Following a slight decrease in late morning, traffic volume surges post-lunch, reaching its zenith between 4 and 5 pm. This pattern underscores the importance of incorporating time of day as a key variable in our predictive analysis.
+
+```{r message=FALSE, echo=FALSE, warning=FALSE}
+# Traffic volume per hour
+metro2 %>%
+  ggplot(aes(x = hour, y = traffic_volume)) +
+  stat_summary(fun = mean, colour="steelblue", geom = "line", aes(group = 1), size = 1.5) + 
+  labs(
+    title = "Traffic volume per hour",
+    x = "Hour", y = "Average hourly traffic volume"
+  ) +
+  theme_classic()
+
+```
+
+In machine learning, it's crucial to differentiate between two types of datasets: the training dataset and the test dataset. The training dataset is used to develop and fine-tune the algorithm, while the test dataset provides an unbiased assessment of the final model's performance. For our study, the training set comprises all data up to the year 2017, encompassing 34,031 observations, and the test set includes data from 2018, with 6,533 observations.
+
+Given that only 31 observations recorded snow, and none were in the test data from the last year, we have decided not to include this feature in our analysis. Thus, the selected features for modeling are holiday, proximity to a holiday (either the previous or following day), temperature, cloud cover percentage, hour of the day, and weekday. These choices are geared towards creating a robust and relevant predictive model.
+
+# Modeling Approaches
+
+To guide our selection of the most suitable machine learning model, preliminary experiments were conducted on a one-year subset of the data using various algorithms, including elastic net, bagged tree, and SVM. Based on a balance between Root Mean Square Error (RMSE) and execution time, Caret's eXtreme Gradient Boosting (xgbTree) was selected as the optimal choice. To maintain the conciseness of this report, and considering the extended run times of some models, details of these initial experiments are excluded. The focus will instead be on fine-tuning the chosen boosting model.
+
+```{r message=FALSE, echo=FALSE}
+# Creating the train and test datasets
+metro_ml <- metro2 %>%
+  select(holiday, temp, rain_1h, clouds_all,
+         traffic_volume, hour, weekday, year, holiday_pre, holiday_pos)
+
+metro_train <- metro_ml %>% filter(year != 2018) %>% select(-year) %>% droplevels()
+metro_test  <- metro_ml %>% filter(year == 2018) %>% select(-year) %>% droplevels()
+
+#+ message=FALSE, echo=FALSE
+# Creating fit control for the models. A cross-validation with 3 folds
+fitControl <- caret::trainControl(
+  method = "cv", # cross-validation
+  number = 3 # with n folds
+)
+
+#+ message=FALSE, echo=FALSE
+# Creating function to predict and measure the model on the train and test data
+predict_and_measure <- function(model, model_name, train_data, test_data, tm) {
+  
+  train_x <- train_data %>% select(-traffic_volume)
+  train_y <- train_data %>% pull(traffic_volume) # Extract as a vector
+  
+  test_x <- test_data %>% select(-traffic_volume)
+  test_y <- test_data %>% pull(traffic_volume) # Extract as a vector
+  
+  pred_train <- predict(model, train_x) 
+  RMSE_train <- RMSE(pred_train, train_y) # Correct order of arguments
+  
+  pred_test <- predict(model, test_x) 
+  RMSE_test <- RMSE(pred_test, test_y) # Correct order of arguments
+  
+  # Check if 'Rsquared' is in the model results, otherwise return NA
+  Rsquared_train <- if("Rsquared" %in% names(model$results)) {
+    round(model$results$Rsquared[as.numeric(rownames(model$bestTune))], 2)
+  } else {
+    NA
+  }
+  
+  perf_grid <- data.frame(
+    Predictor = model_name,
+    "RMSE (train)" = round(RMSE_train, 2),
+    "RMSE (test)" = round(RMSE_test, 2),
+    "R squared (train)" = Rsquared_train,
+    "Time(secs)" = round(tm, 2)
+  )
+  
+  perf_grid
+}
+```
+
+## Linear model and xgbTree model with default hyperparameters
+
+To establish benchmarks, we configured two baseline models: a straightforward linear regression model and the xgbTree model using its default hyperparameters. The purpose of these baselines is to gauge the impact of hyperparameter tuning on model performance. Both models were fitted using the same training control, employing 3-fold cross-validation for robustness.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=TRUE}
+# Linear Model
+# Remove rows with missing values from the training dataset
+metro_train <- na.omit(metro_train)
+
+# Start the timer for model training
+ptm <- proc.time()
+
+# Train the linear model
+linearReg <- train(traffic_volume ~ .,
+                   data = metro_train, 
+                   method = "lm",
+                   preProcess = c('center', 'scale'),
+                   trControl = fitControl)
+
+# Calculate the time taken and extract the elapsed time
+tm <- proc.time() - ptm
+elapsed_time <- tm['elapsed']
+
+# Evaluate the model's performance
+grid <- predict_and_measure(linearReg, 'Linear model', metro_train, metro_test, elapsed_time)
+
+```
+
+The eXtreme Gradient Boosting (xgbTree) model incorporates seven tunable parameters: the number of boosting iterations, maximum tree depth, shrinkage, gamma (minimum loss reduction required for further partition), column subsample ratio, minimum sum of instance weight needed in a child, and subsample percentage of the training instance. We plan to adjust these parameters incrementally to keep the size of our hyperparameter grid manageable and focused. This approach aims to optimize the model's performance without excessively complicating the tuning process.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=TRUE}
+# XGB Boost
+# Start the timer for model training
+ptm <- proc.time()
+
+# Train the xgbTree model
+xgbTree_default <- train(traffic_volume ~ .,
+                         data = metro_train,
+                         method = "xgbTree",
+                         trControl = fitControl,
+                         verbose = FALSE,
+                         verbosity = 0)
+                         
+# Calculate the time taken and extract the elapsed time
+tm <- proc.time() - ptm
+elapsed_time <- tm['elapsed']
+
+# Evaluate the model's performance and add to the grid
+grid <- rbind(grid, predict_and_measure(xgbTree_default, 'xgbTree - Default', metro_train, metro_test, elapsed_time))
+
+# Print the grid to see the results
+grid %>%
+  kable(format = "latex", booktabs = TRUE) %>%
+  kable_styling(latex_options = "scale_down")
+
+
+```
+
+
+The implementation of the default eXtreme Gradient Boosting model showed a significant improvement in RMSE, dropping from `r grid$RMSE..train.[grid$Predictor == "Linear model"]` in the linear regression model to `r grid$RMSE..train.[grid$Predictor == "xgbTree - Default"]` in the training set.
+
+*Default model hyperparameters*:
+
+- nrounds: 150
+
+- max_depth: 3
+
+- eta: 0.4
+
+- gamma: 0
+
+- colsample_bytree: 0.8
+
+- min_child_weight: 1
+
+- subsample: 0.5
+
+***Hyperparameter tuning strategy***:
+
+To balance the trade-off between model performance and computational efficiency, the number of boosting iterations is capped at 1000. Post tuning the other parameters, this limit will be re-evaluated.
+
+## xgbTree - Step 1: Number of iterations and the learning Rate
+
+For the first step, we created a grid search with different boosting iterations, shrinkage and max tree depth.
+
+```{r echo=FALSE, message=TRUE, warning=TRUE, paged.print=TRUE}
+# Create the tuning grid
+tune_grid <- expand.grid(
+  nrounds = seq(from = 100, to = 1000, by = 50),
+  eta = c(0.1, 0.2, 0.3, 0.4),
+  max_depth = c(2, 3, 4, 5),
+  gamma = 0,
+  colsample_bytree = 1,
+  min_child_weight = 1,
+  subsample = 1
+)
+
+# Start the timer for model training
+ptm <- proc.time()
+
+# Train the xgbTree model with the tuning grid
+xgbTree_step1 <- train(traffic_volume ~ .,
+                       data = metro_train,
+                       method = "xgbTree",
+                       trControl = fitControl,
+                       tuneGrid = tune_grid,
+                       verbose=FALSE,
+                       verbosity=0)
+
+# Calculate the time taken and extract the elapsed time
+tm <- proc.time() - ptm
+elapsed_time <- tm['elapsed']
+
+# Evaluate the model's performance and add to the grid
+grid <- rbind(grid, predict_and_measure(xgbTree_step1, 'xgbTree - Step 1', metro_train, metro_test, elapsed_time))
+
+# Define the helper function for plotting tuning results
+tuneplot <- function(x, probs = .90) {
+  ggplot(x) +
+    geom_line(data = x$results, aes_string(x = names(tune_grid)[1], y = "RMSE"), colour = "blue") +
+    coord_cartesian(ylim = c(quantile(x$results$RMSE, probs = probs), min(x$results$RMSE))) +
+    theme_bw()
+}
+
+# Plot the tuning results
+tuneplot(xgbTree_step1)
+
+# Print the grid to see the results
+grid %>%
+  kable(format = "latex", booktabs = TRUE) %>%
+  kable_styling(latex_options = "scale_down")
+```
+
+
+The best model found within the grid search had the tuning parameters nrounds = 1000, max_depth = 3 and eta = 0.4. As shown in the graph above, for lower shrinkage the model does not seem stable. This first tuning already improved the RMSE considerably, from `r grid$RMSE..train.[grid$Predictor == "xgbTree - Default"]` to `r grid$RMSE..train.[grid$Predictor == "xgbTree - Step 1"]`. This is a `r round(((grid$RMSE..train.[grid$Predictor == "xgbTree - Default"] - grid$RMSE..train.[grid$Predictor == "xgbTree - Step 1"]) / grid$RMSE..train.[grid$Predictor == "xgbTree - Default"]) * 100, 2)`% decrease.
+
+## xgbTree - Step 2: Maximum Depth and Minimum Child Weight
+
+With the shrinkage value set to the optimal level identified previously, we now proceed to a focused grid search. This search will concentrate on two key hyperparameters: minimum child weight and maximum tree depth.
+
+***Grid search strategy***:
+
+*Shrinkage*: Fixed to the optimal value (insert the optimal value here).
+
+*Minimum Child Weight*: This parameter will be varied to find the most effective setting.
+
+*Maximum Tree Depth*: Set to 3 ± 1, exploring one level above and one below the best tune identified in the earlier step.
+
+This grid search aims to refine our model further by meticulously adjusting these parameters within a targeted range, thereby optimizing the model's performance.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Define the second tuning grid based on the results of the first step
+tune_grid2 <- expand.grid(
+  nrounds = seq(from = 100, to = 1000, by = 50),
+  eta = xgbTree_step1$bestTune$eta,
+  max_depth = c(max(1, xgbTree_step1$bestTune$max_depth - 1), 
+                xgbTree_step1$bestTune$max_depth, 
+                xgbTree_step1$bestTune$max_depth + 1),
+  gamma = 0,
+  colsample_bytree = 1,
+  min_child_weight = c(0.1, 0.25, 0.5),
+  subsample = 1
+)
+
+# Start the timer for model training
+ptm <- proc.time()
+
+# Train the xgbTree model with the new tuning grid
+xgbTree_step2 <- train(traffic_volume ~ .,
+                       data = metro_train,
+                       method = "xgbTree",
+                       trControl = fitControl,
+                       tuneGrid = tune_grid2,
+                       verbose=FALSE,
+                       verbosity=0)
+
+# Calculate the time taken and extract the elapsed time
+tm <- proc.time() - ptm
+elapsed_time <- tm['elapsed']
+
+# Evaluate the model's performance and add to the grid
+grid <- rbind(grid, predict_and_measure(xgbTree_step2, 'xgbTree - Step 2', metro_train, metro_test, elapsed_time))
+
+# Plot the tuning results using the previously defined tuneplot function
+tuneplot(xgbTree_step2)
+
+
+# Print the grid to see the results
+grid %>%
+  kable(format = "latex", booktabs = TRUE) %>%
+  kable_styling(latex_options = "scale_down")
+
+```
+
+The grid search concluded with the identification of the best-performing model within the explored parameter space. This model's tuning parameters and corresponding RMSE are detailed below:
+
+***Maximum Tree Depth (`max_depth`)***: `r xgbTree_step2$bestTune$max_depth`
+
+***Minimum Child Weight (`min_child_weight`)***: `r xgbTree_step2$bestTune$min_child_weight`
+
+Interestingly, the RMSE remained consistent (`r grid$RMSE..train.[grid$Predictor == "xgbTree - Step 1"]`) across variations in minimum child weight. This suggests that adjusting `min_child_weight` within the tested range does not significantly impact the model's prediction error. This finding provides valuable insights into the sensitivity of our model to changes in this specific parameter, guiding future tuning and model refinement efforts.
+
+## xgbTree - Step 3: Subsample ratio of columns and subsample percentage
+
+In the next step, we fix the minimum child weight to the optimal value found previously, set the maximum tree depth to 3 and do a grid search on the subsample ratio of columns and subsample percentage.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Define the third tuning grid based on the results of the previous steps
+tune_grid3 <- expand.grid(
+  nrounds = seq(from = 100, to = 1000, by = 50),
+  eta = xgbTree_step1$bestTune$eta,
+  max_depth = xgbTree_step2$bestTune$max_depth,
+  gamma = 0,
+  colsample_bytree = c(0.6, 0.8, 1.0),
+  min_child_weight = xgbTree_step2$bestTune$min_child_weight,
+  subsample = c(0.5, 0.75, 1.0)
+)
+
+# Start the timer for model training
+ptm <- proc.time()
+
+# Train the xgbTree model with the new tuning grid
+xgbTree_step3 <- train(traffic_volume ~ .,
+                       data = metro_train,
+                       method = "xgbTree",
+                       trControl = fitControl,
+                       tuneGrid = tune_grid3,
+                       verbose=FALSE,
+                       vrbosity=0)
+
+# Calculate the time taken and extract the elapsed time
+tm <- proc.time() - ptm
+elapsed_time <- tm['elapsed']
+
+# Evaluate the model's performance and add to the grid
+grid <- rbind(grid, predict_and_measure(xgbTree_step3, 'xgbTree - Step 3', metro_train, metro_test, elapsed_time))
+
+# Plot the tuning results using the previously defined tuneplot function
+#tuneplot(xgbTree_step3)
+
+# Plot the tuning results
+plot_object <- tuneplot(xgbTree_step3)
+
+# Assuming plot_object is a ggplot object, modify it for x-axis text
+if (inherits(plot_object, "ggplot")) {
+    plot_object <- plot_object +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+
+# Print the plot
+print(plot_object)
+
+# Print the grid to see the results
+grid %>%
+  kable(format = "latex", booktabs = TRUE) %>%
+  kable_styling(latex_options = "scale_down")
+
+```
+
+The completion of the grid search has resulted in the identification of an optimal model, which interestingly aligns with the parameters used in Step 2. The details of the tuning parameters and the model's performance are as follows:
+
+- ***Column Sample by Tree (`colsample_bytree`)***: `r xgbTree_step3$bestTune$colsample_bytree`
+
+- ***Subsample***: `r xgbTree_step3$bestTune$subsample`
+
+
+Given these parameters are identical to those employed in Step 2, it's notable that the RMSE has remained unchanged. This outcome reinforces the effectiveness of the previously established settings and indicates that further adjustments in these particular parameters may not yield significant improvements in model accuracy.
+
+This consistency in RMSE underscores the robustness of our model's performance with these specific hyperparameter settings.
+
+## xgbTree - Step 4: Gamma
+
+Now we will fix the colsample_bytree and subsamples tuning parameters and perform a grid search on gamma (minimum loss reduction parameter).
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Define the fourth tuning grid based on the results of the previous steps
+tune_grid4 <- expand.grid(
+  nrounds = seq(from = 100, to = 1000, by = 50),
+  eta = xgbTree_step1$bestTune$eta,
+  max_depth = xgbTree_step2$bestTune$max_depth,
+  gamma = c(0, 0.05, 0.1, 0.5, 0.7, 0.9, 1.0),
+  colsample_bytree = xgbTree_step3$bestTune$colsample_bytree,
+  min_child_weight = xgbTree_step2$bestTune$min_child_weight,
+  subsample = xgbTree_step3$bestTune$subsample
+)
+
+# Start the timer for model training
+ptm <- proc.time()
+
+# Train the xgbTree model with the new tuning grid
+xgbTree_step4 <- train(traffic_volume ~ .,
+                       data = metro_train,
+                       method = "xgbTree",
+                       trControl = fitControl,
+                       tuneGrid = tune_grid4,
+                       verbose=FALSE,
+                       verbosity=0)
+
+# Calculate the time taken and extract the elapsed time
+tm <- proc.time() - ptm
+elapsed_time <- tm['elapsed']
+
+# Evaluate the model's performance and add to the grid
+grid <- rbind(grid, predict_and_measure(xgbTree_step4, 'xgbTree - Step 4', metro_train, metro_test, elapsed_time))
+
+# Print the grid to see the results
+grid %>%
+  kable(format = "latex", booktabs = TRUE) %>%
+  kable_styling(latex_options = "scale_down")
+
+```
+
+Different gamma values did not have any effect on the model fit (RMSE), so we continue with the previous value.
+
+## xgbTree - Step 5: Reducing the Learning Rate
+
+Now that we have tunned all hyperparameters parameters, we can go back and try different values for the number of boosting iterations and shrinkage. Before, we tried up until 1000 iterations to save running time, but now the grid search executes up to 10000 iterations.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=TRUE}
+# Define the fifth tuning grid based on the results of the previous steps
+tune_grid5 <- expand.grid(
+  nrounds = seq(from = 100, to = 10000, by = 100),
+  eta = c(0.01, 0.015, 0.025, 0.05, 0.1),
+  max_depth = xgbTree_step3$bestTune$max_depth,
+  gamma = xgbTree_step3$bestTune$gamma,
+  colsample_bytree = xgbTree_step3$bestTune$colsample_bytree,
+  min_child_weight = xgbTree_step3$bestTune$min_child_weight,
+  subsample = xgbTree_step3$bestTune$subsample
+)
+
+# Start the timer for model training
+ptm <- proc.time()
+
+# Train the xgbTree model with the new tuning grid
+xgbTree_step5 <- train(traffic_volume ~ .,
+                       data = metro_train,
+                       method = "xgbTree",
+                       trControl = fitControl,
+                       tuneGrid = tune_grid5,
+                       verbose=FALSE,
+                       verbosity=0)
+
+# Calculate the time taken and extract the elapsed time
+tm <- proc.time() - ptm
+elapsed_time <- tm['elapsed']
+
+# Evaluate the model's performance and add to the grid
+grid <- rbind(grid, predict_and_measure(xgbTree_step5, 'xgbTree - Step 5', metro_train, metro_test, elapsed_time))
+
+# Plot the tuning results using the previously defined tuneplot function
+tuneplot(xgbTree_step5)
+
+
+```
+
+
+## Results 
+
+The final model had the following tuning parameters:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# xgbTree - Final model
+# Define the final tuning grid based on the best results of the previous step
+tune_grid_final <- expand.grid(
+  nrounds = xgbTree_step5$bestTune$nrounds,
+  eta = xgbTree_step5$bestTune$eta,
+  max_depth = xgbTree_step5$bestTune$max_depth,
+  gamma = xgbTree_step5$bestTune$gamma,
+  colsample_bytree = xgbTree_step5$bestTune$colsample_bytree,
+  min_child_weight = xgbTree_step5$bestTune$min_child_weight,
+  subsample = xgbTree_step5$bestTune$subsample
+)
+
+# Display the final tuning grid
+tune_grid_final %>%
+  kable(format = "latex", booktabs = TRUE) %>%
+  kable_styling(latex_options = "scale_down")
+
+```
+
+We now assess the model's performance on the test dataset. A well-fitted model that doesn't overfit is expected to exhibit similar performance metrics on both training and test sets. While a slight increase in RMSE on the test set is anticipated, the key is to maintain a reasonable level of accuracy.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Start the timer for model training
+ptm <- proc.time()
+
+# Train the final xgbTree model
+xgbTree_final <- train(traffic_volume ~ .,
+                       data = metro_train,
+                       method = "xgbTree",
+                       trControl = fitControl,
+                       tuneGrid = tune_grid_final)
+# Calculate the time taken and extract the elapsed time
+tm <- proc.time() - ptm
+elapsed_time <- tm['elapsed']
+# Evaluate the model's performance and add to the grid
+grid <- rbind(grid, predict_and_measure(xgbTree_final, 'xgbTree - Final model', metro_train, metro_test, elapsed_time))
+
+# Print the grid to see the results
+grid %>%
+  kable(format = "latex", booktabs = TRUE) %>%
+  kable_styling(latex_options = "scale_down")
+
+
+```
+
+Training Dataset RMSE: `r grid$RMSE..train.[grid$Predictor == "xgbTree - Final model"]` 
+
+Test Dataset RMSE: `r grid$RMSE..test.[grid$Predictor == "xgbTree - Final model"]`
+
+The observed RMSE for the test dataset is slightly higher than that of the training dataset, which is a typical and expected result. However, the test RMSE of `r grid$RMSE..test.[grid$Predictor == "xgbTree - Final model"]` still signifies a robust fit. Notably, it outperforms the training RMSE of the default hyperparameter xgbTree model. This indicates that our model, even after fine-tuning, maintains a strong predictive capability and effectively handles unseen data. This outcome is promising and underscores the model's generalization ability, a critical aspect of machine learning models.
+
+Beyond the modeling aspect, gaining insights into the factors that significantly influence traffic volume is crucial. This understanding can inform more targeted traffic management and planning strategies.From the analysis represented in the accompanying graph, we identify the 20 most impactful variables. The findings highlight 'Hour' as the most influential factor in determining traffic volume. This is a critical insight, as it underscores the time-of-day dependency of traffic flow. Additionally, the days 'Sunday' and 'Saturday' emerge as significant variables. This observation suggests a noticeable variation in traffic patterns during weekends compared to weekdays.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Variable importance
+# Calculate variable importance
+importance <- varImp(xgbTree_final)
+
+# Plot the top 20 most important variables
+plot(importance, top = 20)
+
+```
+
+# Conclusion
+
+The aim of this project was to employ machine learning techniques to forecast traffic volume on an American interstate, while also identifying key features influencing traffic patterns. Throughout this study, we experimented with various models, engineered new features, and ultimately selected Caret's eXtreme Gradient Boosting (xgbTree) model, balancing Root Mean Square Error (RMSE) and computational efficiency. We fine-tuned seven different hyperparameters of the model, achieving an RMSE of 306.62 on the training set and 455.04 on the test set. The analysis revealed that the most critical feature for explaining traffic was the hour of the day. 
+
+# References
+
+- James, G., Witten, D., Hastie, T., & Tibshirani, R. (2013). "An Introduction to Statistical Learning with Applications in R." Springer.
+- Trevor Hastie, Robert Tibshirani, Jerome Friedman. (2021). "The Elements of Statistical Learning: Data Mining, Inference, and Prediction, Second Edition." Springer Series in Statistics.
+- Papacostas, C. S., & Prevedouros, P. D. (2020). "Transportation Engineering and Planning." Pearson.
+- Levinson, D., & Krizek, K. J. (2008). "Planning for Place and Plexus: Metropolitan Land Use and Transport." Routledge. 
+- Elements of AI (2020). "Understanding the basics of XGBoost and Gradient Boosting." 
